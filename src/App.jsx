@@ -28,7 +28,7 @@ const AuthGate = ({ onAuthSuccess }) => {
           const { data: co, error: coError } = await supabase.from("companies").insert([{ name: companyName, invite_code: code }]).select().single();
           if (coError) throw coError;
           await supabase.from("profiles").insert([{ id: user.id, company_id: co.id, role: "admin", email: user.email }]);
-          alert(`Jungle Created! Code: ${code}`);
+          alert(`Created! Code: ${code}`);
         } else {
           const { data: co, error: fError } = await supabase.from("companies").select("id").eq("invite_code", inviteCode).single();
           if (fError || !co) throw new Error("Invalid Invite Code!");
@@ -58,7 +58,7 @@ const AuthGate = ({ onAuthSuccess }) => {
           {isSignUp && role === "admin" && <input type="text" placeholder="Company Name" value={companyName} onChange={e => setCompanyName(e.target.value)} required />}
           {isSignUp && role === "employee" && <input type="text" placeholder="Invite Code" value={inviteCode} onChange={e => setInviteCode(e.target.value)} required />}
           <button type="submit" className="auth-btn" disabled={loading}>
-            {loading ? <span className="spinner"></span> : "Enter Jungle"}
+            {loading ? <span className="spinner"></span> : "Enter"}
           </button>
         </form>
         <p onClick={() => setIsSignUp(!isSignUp)}>{isSignUp ? "Already a member? Sign In" : "New here? Get Started"}</p>
