@@ -181,7 +181,7 @@ export default function App() {
 
       {profile?.role === "admin" && (
         <form className="admin-input-panel" onSubmit={handleSubmitTask}>
-          <h3>{editingId ? "✎ Edit Mission" : "✚ New Mission"}</h3>
+          <h3>{editingId ? "✎ Edit Task" : "✚ New Task"}</h3>
           <div className="input-row">
             <input type="text" placeholder="Task description..." value={taskText} onChange={e => setTaskText(e.target.value)} required />
             <select value={priority} onChange={e => setPriority(e.target.value)}>
