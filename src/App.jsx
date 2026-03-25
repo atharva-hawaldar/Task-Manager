@@ -44,7 +44,7 @@ const AuthGate = ({ onAuthSuccess }) => {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <div className="logo-icon">✦</div>
+        <div className="logo-icon"></div>
         <h2>{isSignUp ? "Join Task Manager" : "Welcome Back"}</h2>
         <form onSubmit={handleAuth}>
           {isSignUp && (
