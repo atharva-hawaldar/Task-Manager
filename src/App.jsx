@@ -45,7 +45,7 @@ const AuthGate = ({ onAuthSuccess }) => {
     <div className="auth-container">
       <div className="auth-card">
         <div className="logo-icon">✦</div>
-        <h2>{isSignUp ? "Join the Jungle" : "Welcome Back"}</h2>
+        <h2>{isSignUp ? "Join Task Manager" : "Welcome Back"}</h2>
         <form onSubmit={handleAuth}>
           {isSignUp && (
             <div className="role-selector">
@@ -117,7 +117,7 @@ export default function App() {
   // REAL-TIME LISTENER (The Secret to Instant Refresh)
   useEffect(() => {
     if (!profile) return;
-    const channel = supabase.channel('jungle-updates')
+    const channel = supabase.channel('updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `company_id=eq.${profile.company_id}` }, () => {
         fetchData(profile.company_id);
       })
@@ -145,7 +145,7 @@ export default function App() {
   };
 
   const deleteTask = async (id) => {
-    if (!window.confirm("Delete this mission?")) return;
+    if (!window.confirm("Delete this task?")) return;
     // Optimistic Update
     setTasks(tasks.filter(t => t.id !== id));
     await supabase.from("tasks").delete().eq("id", id);
