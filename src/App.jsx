@@ -1,236 +1,201 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
+import OrgHub from "./components/OrgHub";
+import TaskDashboard from "./components/TaskDashboard";
 import "./App.css";
 
-// =========================================
-// 1. AUTH GATE (Login & Company Logic)
-// =========================================
-const AuthGate = ({ onAuthSuccess }) => {
+const AuthGate = () => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("employee");
-  const [companyName, setCompanyName] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleAuth = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
+      const cleanEmail = email.toLowerCase().trim();
       if (isSignUp) {
-        const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
-        if (authError) throw authError;
-        const user = authData.user;
-
-        if (role === "admin") {
-          const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-          const { data: co, error: coError } = await supabase.from("companies").insert([{ name: companyName, invite_code: code }]).select().single();
-          if (coError) throw coError;
-          await supabase.from("profiles").insert([{ id: user.id, company_id: co.id, role: "admin", email: user.email }]);
-          alert(`Created! Code: ${code}`);
-        } else {
-          const { data: co, error: fError } = await supabase.from("companies").select("id").eq("invite_code", inviteCode).single();
-          if (fError || !co) throw new Error("Invalid Invite Code!");
-          await supabase.from("profiles").insert([{ id: user.id, company_id: co.id, role: "employee", email: user.email }]);
-        }
+        const { data, error } = await supabase.auth.signUp({ email: cleanEmail, password });
+        if (error) throw error;
+        if (data?.user && !data?.session) alert("Check email for verification!");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
         if (error) throw error;
       }
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
+    } catch (err) { alert(err.message); } 
+    finally { setLoading(false); }
   };
 
   return (
-    <div className="auth-container">
-      <div className="auth-card">
+    <div className="auth-wrapper">
+      <div className="auth-card animate-fade">
         <div className="logo-icon"></div>
-        <h2>{isSignUp ? "Join Task Manager" : "Welcome Back"}</h2>
+        <h2>{isSignUp ? "Create Account" : "Sign In"}</h2>
         <form onSubmit={handleAuth}>
-          {isSignUp && (
-            <div className="role-selector">
-              <button type="button" className={role === "admin" ? "active" : ""} onClick={() => setRole("admin")}>Manager</button>
-              <button type="button" className={role === "employee" ? "active" : ""} onClick={() => setRole("employee")}>Staff</button>
-            </div>
-          )}
           <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
           <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
-          {isSignUp && role === "admin" && <input type="text" placeholder="Company Name" value={companyName} onChange={e => setCompanyName(e.target.value)} required />}
-          {isSignUp && role === "employee" && <input type="text" placeholder="Invite Code" value={inviteCode} onChange={e => setInviteCode(e.target.value)} required />}
-          <button type="submit" className="auth-btn" disabled={loading}>
-            {loading ? <span className="spinner"></span> : "Enter"}
-          </button>
+          <button type="submit" className="add-btn" disabled={loading}>{loading ? "..." : isSignUp ? "Sign Up" : "Sign In"}</button>
         </form>
-        <p onClick={() => setIsSignUp(!isSignUp)}>{isSignUp ? "Already a member? Sign In" : "New here? Get Started"}</p>
+        <p onClick={() => setIsSignUp(!isSignUp)} className="toggle-auth" style={{cursor: 'pointer', marginTop: '10px', color: '#4ade80'}}>
+          {isSignUp ? "Already have an account? Log In" : "Need an account? Sign Up"}
+        </p>
       </div>
     </div>
   );
 };
 
-// =========================================
-// 2. MAIN APP (Dashboard & Real-time)
-// =========================================
 export default function App() {
   const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const [workspaces, setWorkspaces] = useState([]);
+  const [activeWS, setActiveWS] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const [employees, setEmployees] = useState([]);
+  const [team, setTeam] = useState([]);
+  const [pendingMembers, setPendingMembers] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Form State
   const [taskText, setTaskText] = useState("");
-  const [priority, setPriority] = useState("low");
   const [deadline, setDeadline] = useState("");
+  const [priority, setPriority] = useState("free");
   const [assignee, setAssignee] = useState("");
-  const [editingId, setEditingId] = useState(null);
+  const [newOrgName, setNewOrgName] = useState("");
+  const [inviteCodeInput, setInviteCodeInput] = useState("");
+  const [editingTask, setEditingTask] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) fetchProfile(session.user);
-      else setLoading(false);
+      setUser(session?.user ?? null);
+      if (session?.user) fetchWorkspaces(session.user.id);
+      setLoading(false);
     });
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) fetchProfile(session.user);
-      else { setUser(null); setProfile(null); setLoading(false); }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) fetchWorkspaces(session.user.id);
+      else { setWorkspaces([]); setActiveWS(null); }
     });
-    return () => authListener.subscription.unsubscribe();
+    return () => subscription.unsubscribe();
   }, []);
 
-  const fetchProfile = async (u) => {
-    const { data } = await supabase.from("profiles").select("*, companies(name, invite_code)").eq("id", u.id).single();
-    if (data) {
-      setProfile(data);
-      setUser(u);
-      fetchData(data.company_id);
-    }
+  const fetchWorkspaces = async (userId) => {
+    const { data } = await supabase.from("memberships").select("role, is_approved, companies(*)").eq("user_id", userId);
+    setWorkspaces(data || []);
   };
 
-  const fetchData = async (companyId) => {
-    const { data: t } = await supabase.from("tasks").select("*, profiles!tasks_assigned_to_fkey(email)").eq("company_id", companyId).order("created_at", { ascending: false });
-    setTasks(t || []);
-    const { data: e } = await supabase.from("profiles").select("id, email").eq("company_id", companyId).eq("role", "employee");
-    setEmployees(e || []);
-    setLoading(false);
-  };
-
-  // REAL-TIME LISTENER (The Secret to Instant Refresh)
-  useEffect(() => {
-    if (!profile) return;
-    const channel = supabase.channel('updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `company_id=eq.${profile.company_id}` }, () => {
-        fetchData(profile.company_id);
-      })
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [profile]);
-
-  const handleSubmitTask = async (e) => {
-    e.preventDefault();
-    const taskData = { text: taskText, priority, deadline: deadline || null, assigned_to: assignee || user.id, company_id: profile.company_id };
+  const fetchWorkspaceData = async () => {
+    if (!activeWS?.is_approved) return;
+    const coId = activeWS.companies.id;
     
-    if (editingId) {
-      await supabase.from("tasks").update(taskData).eq("id", editingId);
-      setEditingId(null);
-    } else {
-      await supabase.from("tasks").insert([taskData]);
+    let query = supabase.from("tasks").select(`*, profiles:assigned_to(email)`).eq("company_id", coId);
+    if (activeWS.role !== 'admin') query = query.eq("assigned_to", user.id);
+    const { data: t } = await query.order("created_at", { ascending: false });
+    setTasks(t || []);
+    
+    const { data: memberRows } = await supabase.from("memberships").select("user_id").eq("company_id", coId).eq("is_approved", true);
+    if (memberRows?.length > 0) {
+      const { data: profileRows } = await supabase.from("profiles").select("id, email").in("id", memberRows.map(m => m.user_id));
+      if (profileRows) setTeam(profileRows.map(p => ({ user_id: p.id, profiles: { email: p.email } })));
     }
-    setTaskText(""); setDeadline(""); setAssignee("");
   };
 
-  const toggleTask = async (id, status) => {
-    // Optimistic Update (Immediate UI response)
-    setTasks(tasks.map(t => t.id === id ? { ...t, is_completed: !status } : t));
+  useEffect(() => { fetchWorkspaceData(); }, [activeWS]);
+
+  const createOrg = async () => {
+    if (!newOrgName) return;
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const { data: co, error: coErr } = await supabase.from("companies").insert([{ name: newOrgName, invite_code: code }]).select().single();
+    if (!coErr) {
+      await supabase.from("memberships").insert([{ user_id: user.id, company_id: co.id, role: 'admin', is_approved: true }]);
+      setNewOrgName(""); fetchWorkspaces(user.id);
+    }
+  };
+
+  const joinOrg = async () => {
+    if (!inviteCodeInput) return;
+    const { data: co } = await supabase.from("companies").select("id").eq("invite_code", inviteCodeInput.toUpperCase()).single();
+    if (co) {
+      const { error } = await supabase.from("memberships").insert([{ user_id: user.id, company_id: co.id, role: 'member', is_approved: false }]);
+      if (!error) { setInviteCodeInput(""); fetchWorkspaces(user.id); alert("Request sent!"); }
+    }
+  };
+
+  const addTask = async (e) => {
+    e.preventDefault();
+    const { error } = await supabase.from("tasks").insert([{
+      text: taskText, deadline, priority, assigned_to: assignee || user.id, company_id: activeWS.companies.id, is_completed: false
+    }]);
+    if (!error) { setTaskText(""); setDeadline(""); setPriority("free"); fetchWorkspaceData(); }
+  };
+
+  const updateTask = async (e) => {
+    e.preventDefault();
+    const { error } = await supabase.from("tasks").update({
+      text: editingTask.text, deadline: editingTask.deadline, priority: editingTask.priority, assigned_to: editingTask.assigned_to
+    }).eq("id", editingTask.id);
+    if (!error) { setEditingTask(null); fetchWorkspaceData(); }
+  };
+
+  const toggleComplete = async (id, status) => {
     await supabase.from("tasks").update({ is_completed: !status }).eq("id", id);
+    fetchWorkspaceData();
   };
 
   const deleteTask = async (id) => {
-    if (!window.confirm("Delete this task?")) return;
-    // Optimistic Update
-    setTasks(tasks.filter(t => t.id !== id));
-    await supabase.from("tasks").delete().eq("id", id);
-  };
+    if (window.confirm("Delete task?")) {
+      await supabase.from("tasks").delete().eq("id", id);
+      fetchWorkspaceData();
+    }
+  }
 
-  const startEdit = (task) => {
-    setEditingId(task.id);
-    setTaskText(task.text);
-    setPriority(task.priority);
-    setDeadline(task.deadline || "");
-    setAssignee(task.assigned_to || "");
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  if (loading) return <div className="loading-screen">SYNCING JUNGLE...</div>;
+  if (loading) return <div className="loading-screen">◈ SYNCING...</div>;
   if (!user) return <AuthGate />;
 
   return (
     <div className="app-container">
       <header className="main-header">
         <div className="header-left">
-          <div className="logo-icon">✦</div>
-          <div>
-            <h1>{profile?.companies?.name}</h1>
-            <span className="role-badge">{profile?.role.toUpperCase()} MODE</span>
-          </div>
+          <div className="logo-icon">◈</div>
+          <select 
+            value={activeWS?.companies?.id || "switch"} 
+            onChange={(e) => {
+              if (e.target.value === "switch") setActiveWS(null);
+              else setActiveWS(workspaces.find(w => w.companies.id === e.target.value));
+            }}
+          >
+            <option value="switch">🏠 Switch / New Org</option>
+            {workspaces.map(w => (
+              <option key={w.companies.id} value={w.companies.id}>
+                🏢 {w.companies.name} {w.is_approved ? "" : "(Pending)"}
+              </option>
+            ))}
+          </select>
         </div>
-        <div className="header-right">
-          {profile?.role === "admin" && <div className="invite-info">Code: <span>{profile.companies?.invite_code}</span></div>}
-          <button className="logout-btn" onClick={() => supabase.auth.signOut()}>Exit</button>
-        </div>
+        <button className="logout-btn" onClick={() => supabase.auth.signOut()}>Sign Out</button>
       </header>
 
-      {profile?.role === "admin" && (
-        <form className="admin-input-panel" onSubmit={handleSubmitTask}>
-          <h3>{editingId ? "✎ Edit Task" : "✚ New Task"}</h3>
-          <div className="input-row">
-            <input type="text" placeholder="Task description..." value={taskText} onChange={e => setTaskText(e.target.value)} required />
-            <select value={priority} onChange={e => setPriority(e.target.value)}>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+      {!activeWS ? (
+        <OrgHub 
+          newOrgName={newOrgName} setNewOrgName={setNewOrgName}
+          inviteCodeInput={inviteCodeInput} setInviteCodeInput={setInviteCodeInput}
+          onCreate={createOrg} onJoin={joinOrg}
+        />
+      ) : activeWS.is_approved ? (
+        <TaskDashboard 
+          activeWS={activeWS} tasks={tasks} team={team} user={user}
+          taskText={taskText} setTaskText={setTaskText} deadline={deadline}
+          setDeadline={setDeadline} priority={priority} setPriority={setPriority}
+          assignee={assignee} setAssignee={setAssignee} onAddTask={addTask}
+          editingTask={editingTask} setEditingTask={setEditingTask}
+          onToggleComplete={toggleComplete} onUpdateTask={updateTask} onDeleteTask={deleteTask}
+        />
+      ) : (
+        <div className="no-workspace-wrapper animate-fade">
+          <div className="focus-card">
+            <h2>Waiting for Approval</h2>
+            <p>Your request to join <strong>{activeWS.companies.name}</strong> is pending review.</p>
+            <button className="del-btn" onClick={() => setActiveWS(null)} style={{marginTop: '15px'}}>Back to Hub</button>
           </div>
-          <div className="input-row">
-            <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)} />
-            <select value={assignee} onChange={e => setAssignee(e.target.value)}>
-              <option value="">Assign to: Self</option>
-              {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.email}</option>)}
-            </select>
-            <button type="submit" className="add-btn">{editingId ? "Update" : "Assign"}</button>
-            {editingId && <button type="button" className="cancel-btn" onClick={() => {setEditingId(null); setTaskText("");}}>Cancel</button>}
-          </div>
-        </form>
+        </div>
       )}
-
-      <div className="dashboard-stats">
-        <div className="stat-card"><h3>{tasks.length}</h3><p>Total</p></div>
-        <div className="stat-card"><h3>{tasks.filter(t => !t.is_completed).length}</h3><p>Active</p></div>
-        <div className="stat-card"><h3>{tasks.filter(t => t.is_completed).length}</h3><p>Done</p></div>
-      </div>
-
-      <div className="focus-card">
-        <ul className="task-list">
-          {tasks.length === 0 ? <p style={{textAlign: 'center', opacity: 0.5}}>No missions assigned.</p> : 
-          tasks.map(t => (
-            <li key={t.id} className={`priority-${t.priority} ${t.is_completed ? 'completed' : ''}`}>
-              <div className="checkbox-wrapper">
-                <input type="checkbox" checked={t.is_completed} onChange={() => toggleTask(t.id, t.is_completed)} />
-              </div>
-              <div className="task-info">
-                <span className="task-text">{t.text}</span>
-                <div className="task-meta">
-                  {t.deadline && <span>📅 {t.deadline}</span>}
-                  <span>👤 {t.profiles?.email || "Self"}</span>
-                </div>
-              </div>
-              <div className="task-actions">
-                {profile?.role === "admin" && <button className="edit-icon" onClick={() => startEdit(t)}>✎</button>}
-                <button className="delete-btn" onClick={() => deleteTask(t.id)}>×</button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
     </div>
   );
 }
