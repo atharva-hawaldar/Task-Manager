@@ -11,7 +11,7 @@
             toggleTask={toggleTask}
             updateTask={updateTask}
             isCompletedList={isCompletedList}
-            userRole={userRole} /* NEW: Passing role down */
+            userRole={userRole} 
             />
         ))}
         </ul>
