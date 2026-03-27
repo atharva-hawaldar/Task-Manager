@@ -1,49 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import OrgHub from "./components/OrgHub";
 import TaskDashboard from "./components/TaskDashboard";
+import Auth from "./components/Auth";
 import "./App.css";
-
-const AuthGate = () => {
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const handleAuth = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const cleanEmail = email.toLowerCase().trim();
-      if (isSignUp) {
-        const { data, error } = await supabase.auth.signUp({ email: cleanEmail, password });
-        if (error) throw error;
-        if (data?.user && !data?.session) alert("Check email for verification!");
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
-        if (error) throw error;
-      }
-    } catch (err) { alert(err.message); } 
-    finally { setLoading(false); }
-  };
-
-  return (
-    <div className="auth-wrapper">
-      <div className="auth-card animate-fade">
-        <div className="logo-icon"></div>
-        <h2>{isSignUp ? "Create Account" : "Sign In"}</h2>
-        <form onSubmit={handleAuth}>
-          <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
-          <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
-          <button type="submit" className="add-btn" disabled={loading}>{loading ? "..." : isSignUp ? "Sign Up" : "Sign In"}</button>
-        </form>
-        <p onClick={() => setIsSignUp(!isSignUp)} className="toggle-auth" style={{cursor: 'pointer', marginTop: '10px', color: '#4ade80'}}>
-          {isSignUp ? "Already have an account? Log In" : "Need an account? Sign Up"}
-        </p>
-      </div>
-    </div>
-  );
-};
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -53,101 +13,188 @@ export default function App() {
   const [team, setTeam] = useState([]);
   const [pendingMembers, setPendingMembers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const isMounted = useRef(true);
 
+  // Form States
   const [taskText, setTaskText] = useState("");
   const [deadline, setDeadline] = useState("");
   const [priority, setPriority] = useState("free");
   const [assignee, setAssignee] = useState("");
   const [newOrgName, setNewOrgName] = useState("");
   const [inviteCodeInput, setInviteCodeInput] = useState("");
+  const [requestedRole, setRequestedRole] = useState("member");
   const [editingTask, setEditingTask] = useState(null);
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      if (session?.user) fetchWorkspaces(session.user.id);
-      setLoading(false);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) fetchWorkspaces(session.user.id);
-      else { setWorkspaces([]); setActiveWS(null); }
-    });
-    return () => subscription.unsubscribe();
+  // --- 1. WORKSPACE FETCHING ---
+  const fetchWorkspaces = useCallback(async (userId) => {
+    if (!userId) return;
+    try {
+      const { data, error } = await supabase
+        .from("memberships")
+        .select(`role, is_approved, companies (id, name, invite_code)`)
+        .eq("user_id", userId);
+      
+      if (error) throw error;
+      
+      if (isMounted.current) {
+        const wsData = data || [];
+        setWorkspaces(wsData);
+        
+        setActiveWS(current => {
+          if (current) {
+            const stillExists = wsData.find(w => w.companies.id === current.companies.id);
+            return stillExists || null;
+          }
+          return wsData.find(w => w.is_approved) || wsData[0] || null;
+        });
+      }
+    } catch (err) {
+      console.error("Workspace Fetch Error:", err.message);
+    } finally {
+      if (isMounted.current) setLoading(false);
+    }
   }, []);
 
-  const fetchWorkspaces = async (userId) => {
-    const { data } = await supabase.from("memberships").select("role, is_approved, companies(*)").eq("user_id", userId);
-    setWorkspaces(data || []);
-  };
-
-  const fetchWorkspaceData = async () => {
-    if (!activeWS?.is_approved) return;
+  // --- 2. DASHBOARD DATA SYNC (TASKS & MEMBERS) ---
+  const fetchWorkspaceData = useCallback(async () => {
+    if (!activeWS?.companies?.id) return;
     const coId = activeWS.companies.id;
-    
-    let query = supabase.from("tasks").select(`*, profiles:assigned_to(email)`).eq("company_id", coId);
-    if (activeWS.role !== 'admin') query = query.eq("assigned_to", user.id);
-    const { data: t } = await query.order("created_at", { ascending: false });
-    setTasks(t || []);
-    
-    const { data: memberRows } = await supabase.from("memberships").select("user_id").eq("company_id", coId).eq("is_approved", true);
-    if (memberRows?.length > 0) {
-      const { data: profileRows } = await supabase.from("profiles").select("id, email").in("id", memberRows.map(m => m.user_id));
-      if (profileRows) setTeam(profileRows.map(p => ({ user_id: p.id, profiles: { email: p.email } })));
+
+    try {
+      const [tasksRes, membersRes] = await Promise.all([
+        supabase.from("tasks")
+          .select(`*, profiles:assigned_to(email)`)
+          .eq("company_id", coId)
+          .order("created_at", { ascending: false }),
+        supabase.from("memberships")
+          .select(`user_id, role, is_approved, profiles:user_id(email)`)
+          .eq("company_id", coId)
+      ]);
+
+      if (membersRes.error) throw membersRes.error;
+      if (tasksRes.error) throw tasksRes.error;
+
+      if (isMounted.current) {
+        setTasks(tasksRes.data || []);
+        const allMembers = membersRes.data || [];
+        
+        // Strictly filter by boolean true
+        setTeam(allMembers.filter(m => m.is_approved === true));
+        
+        if (activeWS.role === 'admin' || activeWS.role === 'manager') {
+          // Strictly filter by everything else (false or null)
+          setPendingMembers(allMembers.filter(m => m.is_approved !== true));
+        } else {
+          setPendingMembers([]);
+        }
+      }
+    } catch (err) {
+      console.error("Data Sync Error:", err.message);
     }
-  };
+  }, [activeWS]);
 
-  useEffect(() => { fetchWorkspaceData(); }, [activeWS]);
+  // --- 3. AUTH & LIFECYCLE ---
+  useEffect(() => {
+    isMounted.current = true;
 
-  const createOrg = async () => {
-    if (!newOrgName) return;
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const { data: co, error: coErr } = await supabase.from("companies").insert([{ name: newOrgName, invite_code: code }]).select().single();
-    if (!coErr) {
-      await supabase.from("memberships").insert([{ user_id: user.id, company_id: co.id, role: 'admin', is_approved: true }]);
-      setNewOrgName(""); fetchWorkspaces(user.id);
-    }
-  };
+    const initialize = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (isMounted.current) {
+        if (session?.user) {
+          setUser(session.user);
+          await fetchWorkspaces(session.user.id);
+        } else {
+          setLoading(false);
+        }
+      }
+    };
 
-  const joinOrg = async () => {
-    if (!inviteCodeInput) return;
-    const { data: co } = await supabase.from("companies").select("id").eq("invite_code", inviteCodeInput.toUpperCase()).single();
-    if (co) {
-      const { error } = await supabase.from("memberships").insert([{ user_id: user.id, company_id: co.id, role: 'member', is_approved: false }]);
-      if (!error) { setInviteCodeInput(""); fetchWorkspaces(user.id); alert("Request sent!"); }
-    }
-  };
+    initialize();
 
-  const addTask = async (e) => {
-    e.preventDefault();
-    const { error } = await supabase.from("tasks").insert([{
-      text: taskText, deadline, priority, assigned_to: assignee || user.id, company_id: activeWS.companies.id, is_completed: false
-    }]);
-    if (!error) { setTaskText(""); setDeadline(""); setPriority("free"); fetchWorkspaceData(); }
-  };
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (isMounted.current) {
+        const sUser = session?.user || null;
+        setUser(sUser);
+        if (sUser) {
+          fetchWorkspaces(sUser.id);
+        } else {
+          setWorkspaces([]);
+          setActiveWS(null);
+          setLoading(false);
+        }
+      }
+    });
 
-  const updateTask = async (e) => {
-    e.preventDefault();
-    const { error } = await supabase.from("tasks").update({
-      text: editingTask.text, deadline: editingTask.deadline, priority: editingTask.priority, assigned_to: editingTask.assigned_to
-    }).eq("id", editingTask.id);
-    if (!error) { setEditingTask(null); fetchWorkspaceData(); }
-  };
+    return () => {
+      isMounted.current = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, [fetchWorkspaces]);
 
-  const toggleComplete = async (id, status) => {
-    await supabase.from("tasks").update({ is_completed: !status }).eq("id", id);
-    fetchWorkspaceData();
-  };
-
-  const deleteTask = async (id) => {
-    if (window.confirm("Delete task?")) {
-      await supabase.from("tasks").delete().eq("id", id);
+  useEffect(() => {
+    if (activeWS?.companies?.id && activeWS.is_approved) {
       fetchWorkspaceData();
     }
-  }
+  }, [activeWS?.companies?.id, activeWS?.is_approved, fetchWorkspaceData]);
 
-  if (loading) return <div className="loading-screen">◈ SYNCING...</div>;
-  if (!user) return <AuthGate />;
+  // --- 4. ACTION HANDLERS ---
+  const handleCreateOrg = async () => {
+    if (!newOrgName.trim() || actionLoading) return;
+    setActionLoading(true);
+    try {
+      const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const { data: co, error: coErr } = await supabase
+        .from("companies")
+        .insert([{ name: newOrgName, invite_code: code }])
+        .select().single();
+      
+      if (coErr) throw coErr;
+
+      const { error: memErr } = await supabase.from("memberships").insert([
+        { user_id: user.id, company_id: co.id, role: 'admin', is_approved: true }
+      ]);
+      if (memErr) throw memErr;
+
+      setNewOrgName("");
+      await fetchWorkspaces(user.id);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleJoinOrg = async () => {
+    if (!inviteCodeInput.trim() || actionLoading) return;
+    setActionLoading(true);
+    try {
+      const { data: co } = await supabase
+        .from("companies")
+        .select("id, name")
+        .eq("invite_code", inviteCodeInput.toUpperCase())
+        .maybeSingle();
+      
+      if (!co) throw new Error("Invalid code");
+
+      const { error } = await supabase.from("memberships").insert([
+        { user_id: user.id, company_id: co.id, role: requestedRole, is_approved: false }
+      ]);
+      if (error) throw error;
+
+      setInviteCodeInput("");
+      alert("Request sent! Please wait for admin approval.");
+      await fetchWorkspaces(user.id);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // --- RENDER ---
+  if (loading) return <div className="loading-screen">INITIALIZING...</div>;
+  if (!user) return <Auth onAuthSuccess={setUser} />;
 
   return (
     <div className="app-container">
@@ -155,47 +202,143 @@ export default function App() {
         <div className="header-left">
           <div className="logo-icon">◈</div>
           <select 
-            value={activeWS?.companies?.id || "switch"} 
+            className="org-select"
+            value={activeWS?.companies?.id || ""} 
             onChange={(e) => {
-              if (e.target.value === "switch") setActiveWS(null);
-              else setActiveWS(workspaces.find(w => w.companies.id === e.target.value));
+                const selected = workspaces.find(w => w.companies.id === e.target.value);
+                setActiveWS(selected || null);
             }}
           >
-            <option value="switch">🏠 Switch / New Org</option>
+            <option value="">Organization Hub</option>
             {workspaces.map(w => (
               <option key={w.companies.id} value={w.companies.id}>
-                🏢 {w.companies.name} {w.is_approved ? "" : "(Pending)"}
+                {w.companies.name} {!w.is_approved ? '(Pending)' : ''}
               </option>
             ))}
           </select>
         </div>
-        <button className="logout-btn" onClick={() => supabase.auth.signOut()}>Sign Out</button>
+        <button className="sign-out-btn" onClick={() => supabase.auth.signOut()}>Sign Out</button>
       </header>
 
-      {!activeWS ? (
-        <OrgHub 
-          newOrgName={newOrgName} setNewOrgName={setNewOrgName}
-          inviteCodeInput={inviteCodeInput} setInviteCodeInput={setInviteCodeInput}
-          onCreate={createOrg} onJoin={joinOrg}
-        />
-      ) : activeWS.is_approved ? (
-        <TaskDashboard 
-          activeWS={activeWS} tasks={tasks} team={team} user={user}
-          taskText={taskText} setTaskText={setTaskText} deadline={deadline}
-          setDeadline={setDeadline} priority={priority} setPriority={setPriority}
-          assignee={assignee} setAssignee={setAssignee} onAddTask={addTask}
-          editingTask={editingTask} setEditingTask={setEditingTask}
-          onToggleComplete={toggleComplete} onUpdateTask={updateTask} onDeleteTask={deleteTask}
-        />
-      ) : (
-        <div className="no-workspace-wrapper animate-fade">
-          <div className="focus-card">
-            <h2>Waiting for Approval</h2>
-            <p>Your request to join <strong>{activeWS.companies.name}</strong> is pending review.</p>
-            <button className="del-btn" onClick={() => setActiveWS(null)} style={{marginTop: '15px'}}>Back to Hub</button>
+      <main className="content-area">
+        {!activeWS ? (
+          <OrgHub 
+            newOrgName={newOrgName} setNewOrgName={setNewOrgName} 
+            inviteCodeInput={inviteCodeInput} setInviteCodeInput={setInviteCodeInput} 
+            requestedRole={requestedRole} setRequestedRole={setRequestedRole}
+            onCreate={handleCreateOrg} onJoin={handleJoinOrg}
+            actionLoading={actionLoading} 
+          />
+        ) : !activeWS.is_approved ? (
+          <div className="focus-card text-center">
+            <h2>Approval Pending</h2>
+            <p>Waiting for admin approval for <strong>{activeWS.companies.name}</strong>.</p>
+            <button className="add-btn" style={{marginTop: '20px'}} onClick={() => setActiveWS(null)}>
+              Back to Hub
+            </button>
           </div>
-        </div>
-      )}
+        ) : (
+          <TaskDashboard 
+            activeWS={activeWS} tasks={tasks} team={team} user={user}
+            pendingMembers={pendingMembers} 
+            onApproveMember={async (userId) => {
+              const { error } = await supabase
+                .from("memberships")
+                .update({ is_approved: true })
+                .eq("company_id", activeWS.companies.id)
+                .eq("user_id", userId);
+              
+              if (error) {
+                alert("Approval failed: " + error.message);
+              } else {
+                // Wait for the sync to complete before UI updates
+                await fetchWorkspaceData();
+              }
+            }}
+            onRejectMember={async (userId) => {
+              const { error } = await supabase
+                .from("memberships")
+                .delete()
+                .eq("company_id", activeWS.companies.id)
+                .eq("user_id", userId);
+              
+              if (error) {
+                alert("Rejection failed: " + error.message);
+              } else {
+                await fetchWorkspaceData();
+              }
+            }}
+            taskText={taskText} setTaskText={setTaskText} 
+            deadline={deadline} setDeadline={setDeadline} 
+            priority={priority} setPriority={setPriority}
+            assignee={assignee} setAssignee={setAssignee} 
+            onAddTask={async (e) => {
+              e.preventDefault();
+              const { error } = await supabase.from("tasks").insert([
+                { 
+                    company_id: activeWS.companies.id, 
+                    text: taskText, 
+                    deadline: deadline || null, 
+                    priority, 
+                    assigned_to: assignee || user.id, 
+                    created_by: user.id, 
+                    is_completed: false 
+                }
+              ]);
+              if (error) alert(error.message);
+              else {
+                setTaskText(""); 
+                setDeadline(""); 
+                await fetchWorkspaceData();
+              }
+            }} 
+            editingTask={editingTask} setEditingTask={setEditingTask}
+            onToggleComplete={async (id, state) => {
+              await supabase.from("tasks").update({ is_completed: !state }).eq("id", id);
+              await fetchWorkspaceData();
+            }} 
+            onUpdateTask={async (e) => {
+              e.preventDefault();
+              await supabase.from("tasks").update(editingTask).eq("id", editingTask.id);
+              setEditingTask(null); 
+              await fetchWorkspaceData();
+            }} 
+            onDeleteTask={async (id) => {
+              if (window.confirm("Delete task?")) { 
+                  await supabase.from("tasks").delete().eq("id", id); 
+                  await fetchWorkspaceData(); 
+              }
+            }} 
+            onDeleteOrg={async () => {
+              if (window.confirm("CRITICAL: Delete entire organization and all data?")) {
+                const { error } = await supabase.from("companies").delete().eq("id", activeWS.companies.id);
+                if (error) alert(error.message);
+                else {
+                    setActiveWS(null); 
+                    await fetchWorkspaces(user.id);
+                }
+              }
+            }}
+            onRemoveMember={async (userId) => {
+              if (window.confirm("Remove this member?")) {
+                await supabase.from("memberships").delete().eq("company_id", activeWS.companies.id).eq("user_id", userId);
+                await fetchWorkspaceData();
+              }
+            }} 
+            onLeaveOrg={async () => {
+              if(window.confirm("Leave this organization?")) {
+                await supabase.from("memberships").delete().eq("company_id", activeWS.companies.id).eq("user_id", user.id);
+                setActiveWS(null); 
+                await fetchWorkspaces(user.id);
+              }
+            }}
+            onUpdateMemberRole={async (userId, role) => {
+              await supabase.from("memberships").update({ role }).eq("company_id", activeWS.companies.id).eq("user_id", userId);
+              await fetchWorkspaceData();
+            }}           
+          />
+        )}
+      </main>
     </div>
   );
 }

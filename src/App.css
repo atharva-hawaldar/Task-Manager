@@ -61,6 +61,8 @@ body {
   justify-content: center;
   align-items: center;
   height: 100vh;
+  padding: 20px;
+  box-sizing: border-box;
 }
 
 .auth-card {
@@ -150,17 +152,6 @@ main { padding: 0 5% 60px; }
   margin-bottom: 30px;
 }
 
-.admin-grid-layout {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 25px;
-  margin-bottom: 30px;
-}
-
-@media (max-width: 900px) {
-  .admin-grid-layout { grid-template-columns: 1fr; }
-}
-
 .task-form {
   display: flex;
   flex-direction: column;
@@ -175,13 +166,17 @@ input, select {
   border-radius: 12px;
   font-size: 1rem;
   transition: all 0.2s;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 input:focus, select:focus {
   border-color: var(--leaf-bright);
   background: #181818;
+  outline: none;
 }
 
+/* --- BUTTONS --- */
 .add-btn {
   background: var(--leaf-bright);
   color: black;
@@ -192,14 +187,62 @@ input:focus, select:focus {
   font-size: 1rem;
   cursor: pointer;
   box-shadow: 0 4px 15px rgba(57, 255, 20, 0.2);
+  transition: all 0.2s ease;
 }
 
 .add-btn:hover {
   background: #32e612;
-  transform: scale(1.01);
+  transform: scale(1.02);
 }
 
-/* --- TASK LIST & PRIORITY --- */
+/* NEW: Sign Out Button */
+.sign-out-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border-color);
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.sign-out-btn:hover {
+  background: rgba(255, 68, 68, 0.1);
+  border-color: var(--urgent-red);
+  color: var(--urgent-red);
+  box-shadow: 0 0 15px rgba(255, 68, 68, 0.2);
+}
+
+/* NEW: Small Action Buttons (Approve/Promote) */
+.task-actions .add-btn {
+  padding: 8px 14px !important;
+  font-size: 0.8rem !important;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+/* NEW: Small Delete/Reject Buttons */
+.del-btn-small {
+  background: rgba(255, 68, 68, 0.1);
+  color: var(--urgent-red);
+  border: 1px solid var(--urgent-red);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.del-btn-small:hover {
+  background: var(--urgent-red);
+  color: white;
+  box-shadow: 0 0 10px rgba(255, 68, 68, 0.4);
+}
+
+/* --- TASK LIST & TEAM ROSTER --- */
 .task-list {
   display: flex;
   flex-direction: column;
@@ -213,12 +256,23 @@ input:focus, select:focus {
   padding: 20px;
   background: #111;
   border: 1px solid var(--border-color);
-  border-left: 6px solid #333; /* Default */
+  border-left: 6px solid #333;
   border-radius: 14px;
   transition: all 0.3s ease;
 }
 
-/* Dynamic Priority logic */
+.task-left {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.task-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 .task-item[data-priority="urgent"] {
   border-left-color: var(--urgent-red);
   box-shadow: inset 15px 0 20px -15px rgba(255, 68, 68, 0.3);
@@ -240,94 +294,39 @@ input:focus, select:focus {
   filter: grayscale(1);
 }
 
-.task-left {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-}
-
-.task-content strong {
-  font-size: 1.1rem;
-  display: block;
-}
-
-.task-meta {
-  font-size: 0.8rem;
-  color: var(--text-dim);
-  margin-top: 5px;
-}
-
-/* --- BUTTONS --- */
-.task-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.edit-btn-small, .del-btn-small {
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-size: 0.8rem;
-  background: #1a1a1a;
-  color: white;
-  border: 1px solid #333;
-  cursor: pointer;
-}
-
-.edit-btn-small:hover { border-color: var(--leaf-bright); }
-.del-btn-small:hover { border-color: var(--urgent-red); color: var(--urgent-red); }
-
-.logout-btn {
-  background: transparent;
-  color: var(--text-dim);
-  border: 1px solid #333;
-  padding: 8px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.del-btn-outline {
-  width: 100%;
-  background: rgba(255, 68, 68, 0.05);
-  border: 1px solid var(--urgent-red);
-  color: var(--urgent-red);
-  padding: 15px;
-  border-radius: 12px;
-  font-weight: bold;
-  cursor: pointer;
+/* --- DANGER ZONE --- */
+.danger-zone {
+  border: 1px solid var(--urgent-red) !important;
+  background: rgba(255, 68, 68, 0.05) !important;
   margin-top: 40px;
 }
 
-/* --- SETUP / JOIN PAGE --- */
-.no-workspace-wrapper {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding-top: 80px;
+.danger-zone h3 {
+  color: var(--urgent-red);
+  margin-bottom: 10px;
 }
 
-.setup-card {
-  background: var(--card-bg);
-  padding: 40px;
-  border-radius: 24px;
-  border: 1px solid var(--border-color);
-  width: 100%;
-  max-width: 420px;
-  box-shadow: 0 30px 60px rgba(0,0,0,0.6);
-}
-
-.divider {
-  margin: 30px 0;
-  text-align: center;
-  border-bottom: 1px solid #222;
-  line-height: 0.1em;
-}
-
-.divider span {
-  background: var(--card-bg);
-  padding: 0 15px;
-  color: #555;
-  font-size: 0.85rem;
+.del-btn-outline {
+  width: auto;
+  min-width: 150px;
+  background: rgba(255, 68, 68, 0.1);
+  border: 1px solid var(--urgent-red);
+  color: var(--urgent-red);
+  padding: 12px 20px;
+  border-radius: 12px;
   font-weight: bold;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.del-btn-outline:hover {
+  background: var(--urgent-red);
+  color: white;
+  box-shadow: 0 0 20px rgba(255, 68, 68, 0.4);
+}
+
+.logout-btn {
+  
 }
 
 /* --- SCROLLBAR --- */
@@ -335,3 +334,56 @@ input:focus, select:focus {
 ::-webkit-scrollbar-track { background: var(--bg-dark); }
 ::-webkit-scrollbar-thumb { background: #222; border-radius: 10px; }
 ::-webkit-scrollbar-thumb:hover { background: #333; }
+
+/* =========================================
+   MOBILE RESPONSIVENESS (PHONES & TABLETS)
+   ========================================= */
+@media screen and (max-width: 768px) {
+  .main-header {
+    flex-direction: column;
+    gap: 15px;
+    padding: 15px;
+  }
+  
+  .dashboard-stats {
+    grid-template-columns: 1fr;
+    padding: 20px 5%;
+  }
+
+  .focus-card {
+    padding: 20px;
+  }
+
+  .form-row {
+    flex-direction: column;
+  }
+
+  /* Make team roster and tasks stack vertically on small screens */
+  .task-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 15px;
+  }
+
+  /* Stretch action buttons across the bottom on mobile */
+  .task-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .task-actions button {
+    flex: 1;
+    text-align: center;
+  }
+
+  .danger-content {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 15px;
+  }
+  
+  .del-btn-outline {
+    width: 100%;
+  }
+}
